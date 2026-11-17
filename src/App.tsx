@@ -3,15 +3,32 @@ import AdminDashboard from './AdminDashboard'
 import { useEffect, useState, type FormEvent, type ReactNode } from 'react'
 import { Link, Route, Routes, useNavigate } from 'react-router-dom'
 import {
-  ArrowRight, Building2, Check, CircleHelp,
-  FileCheck2, Globe2, Layers3, LockKeyhole, Menu, Megaphone,
-  ShieldCheck, Sparkles, Wallet, X, LogOut
+  ArrowRight,
+  Building2,
+  Check,
+  CircleHelp,
+  FileCheck2,
+  Globe2,
+  Layers3,
+  LockKeyhole,
+  Menu,
+  Megaphone,
+  ShieldCheck,
+  Sparkles,
+  Wallet,
+  X,
+  LogOut,
+  LayoutDashboard,
+  ClipboardList,
+  Handshake,
+  CalendarCheck,
 } from 'lucide-react'
 import { isSupabaseConfigured, supabase } from './lib/supabase'
 import SupabaseTest from './SupabaseTest'
 import SocietyRegistration from './SocietyRegistration'
 import BrandRegistration from './BrandRegistration'
 import BrandMarketplace from './BrandMarketplace'
+import AccountLoadingScreen from './AccountLoadingScreen'
 
 function BrandMark() {
   return (
@@ -894,6 +911,8 @@ function SocietyDashboard() {
   const [inventory, setInventory] = useState<any[]>([])
   const [sponsorshipRequests, setSponsorshipRequests] = useState<any[]>([])
   const [bookingRequests, setBookingRequests] = useState<any[]>([])
+  const [campaignItems, setCampaignItems] = useState<any[]>([])
+  const [campaignView, setCampaignView] = useState<'pending' | 'approved' | 'rejected'>('pending')
 
   const [eventName, setEventName] = useState('')
   const [eventType, setEventType] = useState('Community Event')
@@ -911,6 +930,19 @@ function SocietyDashboard() {
   const [notice, setNotice] = useState('')
 
   const [showInventoryForm, setShowInventoryForm] = useState(false)
+  const [inventoryEditRequests, setInventoryEditRequests] = useState<any[]>([])
+  
+
+    // INVENTORY EDIT REQUEST STATES
+  const [editingInventory, setEditingInventory] = useState<any>(null)
+  const [editItemName, setEditItemName] = useState('')
+  const [editCategory, setEditCategory] = useState('Signage')
+  const [editQuantity, setEditQuantity] = useState('1')
+  const [editRate, setEditRate] = useState('')
+  const [editRateUnit, setEditRateUnit] = useState('per month')
+  const [editLocation, setEditLocation] = useState('')
+  const [editDescription, setEditDescription] = useState('')
+  const [editReason, setEditReason] = useState('')
 
   const [inventoryName, setInventoryName] = useState('')
   const [category, setCategory] = useState('Signage')
@@ -977,6 +1009,13 @@ function SocietyDashboard() {
             .eq('society_id', societyData.id)
             .order('created_at', { ascending: false })
 
+                    const { data: editRequestData, error: editRequestError } =
+          await supabase
+            .from('society_inventory_edit_requests')
+            .select('*')
+            .eq('society_id', societyData.id)
+            .order('created_at', { ascending: false })
+
         const { data: sponsorshipData, error: sponsorshipError } =
           await supabase
             .from('sponsorship_requests')
@@ -991,19 +1030,32 @@ function SocietyDashboard() {
             .eq('society_id', societyData.id)
             .order('created_at', { ascending: false })
 
+          const { data: campaignItemData, error: campaignItemError } =
+  await supabase
+    .from('campaign_items')
+    .select('*')
+    .eq('society_id', societyData.id)
+    .order('updated_at', { ascending: false })
+
         if (!isMounted) return
 
-        if (inventoryError) {
+                if (inventoryError) {
           setError(inventoryError.message)
+        } else if (editRequestError) {
+          setError(editRequestError.message)
         } else if (sponsorshipError) {
           setError(sponsorshipError.message)
         } else if (bookingError) {
-          setError(bookingError.message)
-        } else {
+  setError(bookingError.message)
+} else if (campaignItemError) {
+  setError(campaignItemError.message)
+} else {
           setSociety(societyData)
           setInventory(inventoryData ?? [])
+                    setInventoryEditRequests(editRequestData ?? [])
           setSponsorshipRequests(sponsorshipData ?? [])
           setBookingRequests(bookingData ?? [])
+          setCampaignItems(campaignItemData ?? [])
         }
 
         setLoading(false)
@@ -1025,6 +1077,20 @@ function SocietyDashboard() {
       isMounted = false
     }
   }, [])
+
+  function openInventoryEditForm(item: any) {
+    setEditingInventory(item)
+    setEditItemName(item.item_name ?? '')
+    setEditCategory(item.category ?? 'Signage')
+    setEditQuantity(String(item.quantity ?? 1))
+    setEditRate(String(item.rate ?? ''))
+    setEditRateUnit(item.rate_unit ?? 'per month')
+    setEditLocation(item.location_details ?? '')
+    setEditDescription(item.description ?? '')
+    setEditReason('')
+    setError('')
+    setNotice('')
+  }
 
   async function handleAddInventory(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -1090,6 +1156,76 @@ function SocietyDashboard() {
         err instanceof Error
           ? err.message
           : 'Unable to submit inventory.'
+      )
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function handleSubmitInventoryEditRequest(
+    event: FormEvent<HTMLFormElement>
+  ) {
+    event.preventDefault()
+    setError('')
+    setNotice('')
+
+    if (!supabase || !society || !editingInventory) {
+      setError('Unable to verify your inventory details.')
+      return
+    }
+
+    const parsedQuantity = Number(editQuantity)
+    const parsedRate = Number(editRate)
+
+    if (!Number.isInteger(parsedQuantity) || parsedQuantity < 1) {
+      setError('Please enter a valid quantity.')
+      return
+    }
+
+    if (!Number.isFinite(parsedRate) || parsedRate < 0) {
+      setError('Please enter a valid advertising rate.')
+      return
+    }
+
+    if (!editReason.trim()) {
+      setError('Please enter a reason for requesting this change.')
+      return
+    }
+
+    setSaving(true)
+
+    try {
+      const { data, error: insertError } = await supabase
+        .from('society_inventory_edit_requests')
+        .insert({
+          inventory_id: editingInventory.id,
+          society_id: society.id,
+          requested_item_name: editItemName.trim(),
+          requested_category: editCategory,
+          requested_description: editDescription.trim() || null,
+          requested_quantity: parsedQuantity,
+          requested_rate: parsedRate,
+          requested_rate_unit: editRateUnit,
+          requested_location_details: editLocation.trim() || null,
+          edit_reason: editReason.trim(),
+          request_status: 'pending',
+        })
+        .select()
+        .single()
+
+      if (insertError) {
+        setError(insertError.message)
+        return
+      }
+
+      setInventoryEditRequests(previous => [data, ...previous])
+      setEditingInventory(null)
+      setNotice('Your inventory edit request has been submitted for Admin approval.')
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : 'Unable to submit inventory edit request.'
       )
     } finally {
       setSaving(false)
@@ -1218,6 +1354,73 @@ function SocietyDashboard() {
     }
   }
 
+  async function handleCampaignItemDecision(
+    itemId: string,
+    decision: 'approved' | 'rejected'
+  ) {
+    setError('')
+    setNotice('')
+
+    if (!supabase || !society) {
+      setError('Your society account could not be verified.')
+      return
+    }
+
+    let remarks: string | null = null
+
+    if (decision === 'rejected') {
+      const reason = window.prompt('Please enter a reason for rejecting this campaign item:')
+      if (!reason || !reason.trim()) {
+        return
+      }
+      remarks = reason.trim()
+    }
+
+    setSaving(true)
+
+    try {
+      const { error: reviewError } = await supabase.rpc(
+        'review_campaign_item',
+        {
+          p_campaign_item_id: itemId,
+          p_decision: decision,
+          p_remarks: remarks,
+        }
+      )
+
+      if (reviewError) {
+        setError(reviewError.message)
+        return
+      }
+
+      const { data, error: refreshError } = await supabase
+        .from('campaign_items')
+        .select('*')
+        .eq('society_id', society.id)
+        .order('updated_at', { ascending: false })
+
+      if (refreshError) {
+        setError(refreshError.message)
+        return
+      }
+
+      setCampaignItems(data ?? [])
+      setNotice(
+        decision === 'approved'
+          ? 'Campaign item approved successfully.'
+          : 'Campaign item rejected successfully.'
+      )
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : 'Unable to update the campaign item.'
+      )
+    } finally {
+      setSaving(false)
+    }
+  }
+
   async function handleLogout() {
     if (supabase) {
       await supabase.auth.signOut()
@@ -1225,8 +1428,140 @@ function SocietyDashboard() {
     navigate('/login')
   }
 
+  // SOCIETY DASHBOARD ANALYTICS
+  const totalInventoryListings = inventory.length
+
+  const totalAdvertisingUnits = inventory.reduce(
+    (total, item) => total + Number(item.quantity || 0),
+    0
+  )
+
+  const approvedInventory = inventory.filter(
+    item => item.approval_status === 'approved'
+  )
+
+  const pendingInventory = inventory.filter(
+    item => item.approval_status === 'pending'
+  )
+
+  const rejectedInventory = inventory.filter(
+    item => item.approval_status === 'rejected'
+  )
+
+  const approvedAdvertisingUnits = approvedInventory.reduce(
+    (total, item) => total + Number(item.quantity || 0),
+    0
+  )
+
+  const rejectedBookings = bookingRequests.filter(
+    request =>
+      request.admin_status === 'rejected' ||
+      request.society_status === 'rejected'
+  ).length
+
+  const approvedBookings = bookingRequests.filter(
+    request =>
+      request.admin_status === 'approved' &&
+      request.society_status === 'approved'
+  ).length
+
+  const pendingBookings = bookingRequests.filter(
+    request =>
+      request.admin_status !== 'rejected' &&
+      request.society_status !== 'rejected' &&
+      (
+        request.admin_status === 'pending' ||
+        request.society_status === 'pending'
+      )
+  ).length
+
+  const visibleSocietyCampaignItems = campaignItems.filter(item => {
+    if (campaignView === 'approved') return item.society_status === 'approved'
+    if (campaignView === 'rejected') return item.society_status === 'rejected'
+    return item.society_status === 'pending' && item.admin_status !== 'rejected' && item.item_status !== 'rejected'
+  })
+
+  const inventoryCategoryStats = Object.entries(
+    inventory.reduce((stats: Record<string, number>, item) => {
+      const itemCategory = item.category || 'Other'
+      stats[itemCategory] = (stats[itemCategory] || 0) + 1
+      return stats
+    }, {})
+  ).sort((a, b) => b[1] - a[1])
+
+  const maxCategoryCount = Math.max(
+    1,
+    ...inventoryCategoryStats.map(([, count]) => count)
+  )
+
   return (
     <main className="login-page">
+            <div className="society-dashboard-layout">
+
+        {/* LEFT NAVIGATION SIDEBAR */}
+        <aside className="society-dashboard-sidebar">
+
+          <div className="society-sidebar-brand">
+            <BrandMark />
+            <span>Society Portal</span>
+          </div>
+
+          <div className="society-sidebar-label">
+            WORKSPACE
+          </div>
+
+          <nav className="society-sidebar-nav">
+            <a href="#society-dashboard-overview">
+              <LayoutDashboard size={19} />
+              Dashboard
+            </a>
+
+            <a href="#society-profile">
+              <Building2 size={19} />
+              Society Profile
+            </a>
+
+            <a href="#society-inventory">
+              <ClipboardList size={19} />
+              Advertising Inventory
+            </a>
+
+            <a href="#society-edit-requests">
+              <FileCheck2 size={19} />
+              Edit Requests
+            </a>
+
+            <a href="#society-sponsorships">
+              <Handshake size={19} />
+              Sponsorships
+            </a>
+
+            <a href="#society-campaign-approvals">
+              <Check size={19} />
+              Campaign Approvals
+            </a>
+
+            <a href="#society-bookings">
+              <CalendarCheck size={19} />
+              Brand Bookings
+            </a>
+          </nav>
+
+          <div className="society-sidebar-bottom">
+            <button
+              type="button"
+              onClick={handleLogout}
+            >
+              <LogOut size={18} />
+              Log out
+            </button>
+          </div>
+
+        </aside>
+
+        {/* MAIN DASHBOARD CONTENT */}
+        <div className="society-dashboard-content">
+
       <div className="login-top">
         <BrandMark />
         <button className="button button-small" onClick={handleLogout}>
@@ -1238,7 +1573,7 @@ function SocietyDashboard() {
         <span className="eyebrow">SOCIETY PORTAL</span>
         <h1>Society Dashboard</h1>
 
-        {loading && <p>Loading your society account...</p>}
+        {loading && <AccountLoadingScreen accountType="society" />}
 
         {error && (
           <div className="form-notice" role="alert" style={{ marginTop: 20 }}>
@@ -1249,7 +1584,7 @@ function SocietyDashboard() {
         {!loading && society && (
           <>
             {/* SOCIETY PROFILE */}
-            <section className="society-profile-card">
+            <section id="society-profile" className="society-profile-card">
               <div className="society-profile-top">
                 <span className="eyebrow">SOCIETY PROFILE</span>
                 <span className="society-approved-badge">
@@ -1321,9 +1656,114 @@ function SocietyDashboard() {
                 <strong>✓ Active · Approved</strong>
               </div>
             </section>
+{/* SOCIETY OVERVIEW DASHBOARD */}
+<section id="society-dashboard-overview" className="society-overview-section">
+  <div className="society-overview-heading">
+    <span className="eyebrow">SOCIETY OVERVIEW</span>
+    <h2>Your advertising performance</h2>
+    <p>
+      Track your advertising inventory, approvals and brand booking
+      activity in one place.
+    </p>
+  </div>
 
+  <div className="society-overview-grid">
+    <div className="society-overview-card">
+      <span>Total Inventory Listings</span>
+      <strong>{totalInventoryListings}</strong>
+      <small>All submitted listings</small>
+    </div>
+
+    <div className="society-overview-card">
+      <span>Advertising Units</span>
+      <strong>{totalAdvertisingUnits}</strong>
+      <small>Total available quantity</small>
+    </div>
+
+    <div className="society-overview-card">
+      <span>Approved Listings</span>
+      <strong>{approvedInventory.length}</strong>
+      <small>{approvedAdvertisingUnits} approved units</small>
+    </div>
+
+    <div className="society-overview-card">
+      <span>Pending Inventory</span>
+      <strong>{pendingInventory.length}</strong>
+      <small>Awaiting Admin approval</small>
+    </div>
+
+    <div className="society-overview-card">
+      <span>Total Booking Requests</span>
+      <strong>{bookingRequests.length}</strong>
+      <small>Received from brands</small>
+    </div>
+
+    <div className="society-overview-card">
+      <span>Approved Bookings</span>
+      <strong>{approvedBookings}</strong>
+      <small>{pendingBookings} pending · {rejectedBookings} rejected</small>
+    </div>
+  </div>
+
+  <div className="society-analytics-grid">
+    <div className="society-analytics-card">
+      <h3>Inventory by Category</h3>
+      <p>Number of advertising listings in each category.</p>
+
+      {inventoryCategoryStats.length === 0 ? (
+        <div className="society-analytics-empty">
+          No inventory added yet.
+        </div>
+      ) : (
+        <div className="society-category-chart">
+          {inventoryCategoryStats.map(([categoryName, count]) => (
+            <div className="society-category-row" key={categoryName}>
+              <div className="society-category-label">
+                <span>{categoryName}</span>
+                <strong>{count}</strong>
+              </div>
+
+              <div className="society-category-track">
+                <div
+                  className="society-category-fill"
+                  style={{
+                    width: `${(count / maxCategoryCount) * 100}%`,
+                  }}
+                />
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+
+    <div className="society-analytics-card">
+      <h3>Inventory Approval Status</h3>
+      <p>Track the status of your submitted advertising spaces.</p>
+
+      <div className="society-status-row">
+        <span>Approved</span>
+        <strong>{approvedInventory.length}</strong>
+      </div>
+
+      <div className="society-status-row">
+        <span>Pending</span>
+        <strong>{pendingInventory.length}</strong>
+      </div>
+
+      <div className="society-status-row">
+        <span>Rejected</span>
+        <strong>{rejectedInventory.length}</strong>
+      </div>
+
+      <div className="society-status-total">
+        Total listings: {totalInventoryListings}
+      </div>
+    </div>
+  </div>
+</section>
             {/* ADVERTISING INVENTORY */}
-            <section className="inventory-manager-card">
+            <section id="society-inventory" className="inventory-manager-card">
               <div className="inventory-manager-heading">
                 <div className="inventory-manager-icon">
                   <Layers3 size={28} />
@@ -1546,6 +1986,25 @@ function SocietyDashboard() {
               {item.admin_remarks && (
                 <p>Admin remarks: {item.admin_remarks}</p>
               )}
+
+                            {item.approval_status === 'approved' && (
+                inventoryEditRequests.some(
+                  request =>
+                    request.inventory_id === item.id &&
+                    request.request_status === 'pending'
+                ) ? (
+                  <p><strong>⏳ Edit Request Pending Admin Approval</strong></p>
+                ) : (
+                  <button
+                    type="button"
+                    className="button button-outline"
+                    onClick={() => openInventoryEditForm(item)}
+                  >
+                    Request Edit
+                  </button>
+                )
+              )}
+
             </article>
           ))}
         </div>
@@ -1554,261 +2013,665 @@ function SocietyDashboard() {
   </details>
 </section>
 
-            {/* COMMUNITY SPONSORSHIPS */}
-            <section className="login-panel" style={{ marginTop: 32 }}>
-              <span className="eyebrow">COMMUNITY SPONSORSHIPS</span>
-              <h2><Megaphone size={22} /> Sponsorship Requests</h2>
-              <p>
-                Submit sponsorship opportunities for your society events.
-                Admin will review your request before it becomes visible to brands.
-              </p>
+            {/* INVENTORY EDIT REQUEST FORM */}
+            {editingInventory && (
+              <section className="inventory-manager-card" style={{ marginTop: 24 }}>
+                <div className="inventory-form-title">
+                  <span className="eyebrow">REQUEST INVENTORY CHANGE</span>
+                  <h2>Edit: {editingInventory.item_name}</h2>
+                  <p>
+                    Your existing approved listing will remain unchanged
+                    until Admin approves this request.
+                  </p>
+                </div>
 
-              <form
-                className="login-form"
-                onSubmit={handleAddSponsorship}
-                style={{ marginTop: 20 }}
-              >
-                <label>
-                  Event name *
-                  <input
-                    required
-                    maxLength={150}
-                    placeholder="Example: Annual Society Carnival"
-                    value={eventName}
-                    onChange={e => setEventName(e.target.value)}
-                  />
-                </label>
-
-                <label>
-                  Event type *
-                  <select
-                    value={eventType}
-                    onChange={e => setEventType(e.target.value)}
-                  >
-                    <option>Community Event</option>
-                    <option>Festival Celebration</option>
-                    <option>Sports Event</option>
-                    <option>Kids Carnival</option>
-                    <option>RWA Event</option>
-                    <option>Exhibition</option>
-                    <option>Other</option>
-                  </select>
-                </label>
-
-                <label>
-                  Event date
-                  <input
-                    type="date"
-                    value={eventDate}
-                    onChange={e => setEventDate(e.target.value)}
-                  />
-                </label>
-
-                <label>
-                  Expected audience *
-                  <input
-                    type="number"
-                    min="0"
-                    required
-                    placeholder="Example: 500"
-                    value={expectedAudience}
-                    onChange={e => setExpectedAudience(e.target.value)}
-                  />
-                </label>
-
-                <label>
-                  Sponsorship amount required (₹) *
-                  <input
-                    type="number"
-                    min="0"
-                    step="0.01"
-                    required
-                    placeholder="Example: 50000"
-                    value={sponsorshipAmount}
-                    onChange={e => setSponsorshipAmount(e.target.value)}
-                  />
-                </label>
-
-                <label>
-                  Purpose of sponsorship
-                  <textarea
-                    rows={3}
-                    value={sponsorshipPurpose}
-                    onChange={e => setSponsorshipPurpose(e.target.value)}
-                    placeholder="Explain what the sponsorship will support..."
-                  />
-                </label>
-
-                <label>
-                  Benefits offered to sponsors
-                  <textarea
-                    rows={3}
-                    value={sponsorBenefits}
-                    onChange={e => setSponsorBenefits(e.target.value)}
-                    placeholder="Example: Stall space, banners, branding..."
-                  />
-                </label>
-
-                <label>
-                  Proposal link (optional)
-                  <input
-                    type="url"
-                    placeholder="https://..."
-                    value={proposalUrl}
-                    onChange={e => setProposalUrl(e.target.value)}
-                  />
-                </label>
-
-                <button
-                  className="button form-submit"
-                  type="submit"
-                  disabled={saving}
+                <form
+                  className="login-form inventory-form-grid"
+                  onSubmit={handleSubmitInventoryEditRequest}
                 >
-                  {saving ? 'Submitting...' : 'Submit Sponsorship Request'}
-                  <ArrowRight size={17} />
-                </button>
-              </form>
-            </section>
+                  <label>
+                    Inventory name *
+                    <input
+                      required
+                      maxLength={120}
+                      value={editItemName}
+                      onChange={e => setEditItemName(e.target.value)}
+                    />
+                  </label>
 
-            {/* SPONSORSHIP SUBMISSIONS */}
-            <section style={{ marginTop: 32 }}>
-              <span className="eyebrow">YOUR SUBMISSIONS</span>
-              <h2>Sponsorship Requests Submitted</h2>
+                  <label>
+                    Advertising category *
+                    <select
+                      required
+                      value={editCategory}
+                      onChange={e => setEditCategory(e.target.value)}
+                    >
+                      <option value="Signage">Signage and banners</option>
+                      <option value="Kiosk">Kiosk and activations</option>
+                      <option value="Car Display">Car display</option>
+                      <option value="Bike Display">Bike display</option>
+                      <option value="Lift Branding">Lift branding</option>
+                      <option value="Digital Screens">Digital screens</option>
+                      <option value="Kids Carnival">Kids carnival</option>
+                      <option value="Events">Events and sponsorship</option>
+                      <option value="Other">Other</option>
+                    </select>
+                  </label>
 
-              {sponsorshipRequests.length === 0 ? (
-                <div className="login-panel" style={{ marginTop: 16 }}>
-                  <p>You have not submitted any sponsorship requests yet.</p>
+                  <label>
+                    Available quantity *
+                    <input
+                      type="number"
+                      min="1"
+                      step="1"
+                      required
+                      value={editQuantity}
+                      onChange={e => setEditQuantity(e.target.value)}
+                    />
+                  </label>
+
+                  <label>
+                    Advertising rate (₹) *
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      required
+                      value={editRate}
+                      onChange={e => setEditRate(e.target.value)}
+                    />
+                  </label>
+
+                  <label>
+                    Rate basis *
+                    <select
+                      value={editRateUnit}
+                      onChange={e => setEditRateUnit(e.target.value)}
+                    >
+                      <option value="per month">Per month</option>
+                      <option value="per day">Per day</option>
+                      <option value="per event">Per event</option>
+                      <option value="per booking">Per booking</option>
+                      <option value="one time">One time</option>
+                    </select>
+                  </label>
+
+                  <label>
+                    Location inside society
+                    <input
+                      value={editLocation}
+                      onChange={e => setEditLocation(e.target.value)}
+                    />
+                  </label>
+
+                  <label className="inventory-description-field">
+                    Description
+                    <textarea
+                      rows={4}
+                      value={editDescription}
+                      onChange={e => setEditDescription(e.target.value)}
+                    />
+                  </label>
+
+                  <label className="inventory-description-field">
+                    Reason for requesting this change *
+                    <textarea
+                      rows={3}
+                      required
+                      value={editReason}
+                      onChange={e => setEditReason(e.target.value)}
+                      placeholder="Explain why this inventory needs to be updated..."
+                    />
+                  </label>
+
+                  <div className="inventory-form-actions">
+                    <button
+                      type="button"
+                      className="button button-outline"
+                      onClick={() => setEditingInventory(null)}
+                    >
+                      Cancel
+                    </button>
+
+                    <button
+                      className="button form-submit"
+                      type="submit"
+                      disabled={saving}
+                    >
+                      {saving ? 'Submitting...' : 'Submit Edit Request'}
+                      <ArrowRight size={17} />
+                    </button>
+                  </div>
+                </form>
+              </section>
+            )}
+                       
+{/* INVENTORY EDIT REQUEST HISTORY */}
+<details id="society-edit-requests" className="society-listings-details">
+  <summary className="society-listings-summary">
+    <div className="society-listings-heading">
+      <div className="society-listings-icon">
+        <Layers3 size={25} />
+      </div>
+
+      <div>
+        <span className="eyebrow">INVENTORY CHANGE REQUESTS</span>
+        <h2>Your Edit Requests</h2>
+        <p>
+          Track inventory changes submitted for Admin approval.
+        </p>
+      </div>
+    </div>
+
+    <span className="society-explore-button">
+      Explore Edit Requests
+      <span className="society-listings-arrow">⌄</span>
+    </span>
+  </summary>
+
+  <div className="society-listings-content">
+    {inventoryEditRequests.length === 0 ? (
+      <div className="login-panel">
+        <p>You have not submitted any inventory edit requests yet.</p>
+      </div>
+    ) : (
+      <div className="format-grid">
+        {inventoryEditRequests.map(request => (
+          <article className="format-card" key={request.id}>
+            <div className="format-icon">
+              <Layers3 />
+            </div>
+
+            <h3>
+              {inventory.find(
+                item => item.id === request.inventory_id
+              )?.item_name ?? 'Inventory item'}
+            </h3>
+
+            <p>Requested name: {request.requested_item_name}</p>
+            <p>Requested category: {request.requested_category}</p>
+            <p>Requested quantity: {request.requested_quantity}</p>
+
+            <p>
+              Requested rate: ₹
+              {Number(request.requested_rate).toLocaleString('en-IN')}
+              {' '}{request.requested_rate_unit}
+            </p>
+
+            <p>Reason: {request.edit_reason}</p>
+
+            <p>
+              Status: <strong>
+                {request.request_status === 'approved'
+                  ? 'Approved'
+                  : request.request_status === 'rejected'
+                    ? 'Rejected'
+                    : 'Pending Admin Approval'}
+              </strong>
+            </p>
+
+            {request.admin_remarks && (
+              <p>Admin remarks: {request.admin_remarks}</p>
+            )}
+          </article>
+        ))}
+      </div>
+    )}
+  </div>
+</details>
+
+           
+            {/* COMMUNITY SPONSORSHIPS */}
+           <details id="society-sponsorships" className="society-listings-details">
+              <summary className="society-listings-summary">
+                <div>
+                  <span className="eyebrow">COMMUNITY SPONSORSHIPS</span>
+                  <h2><Megaphone size={22} /> Sponsorship Requests</h2>
+                  <p>
+                    Submit sponsorship opportunities for your society events
+                    and track your submissions.
+                  </p>
                 </div>
-              ) : (
-                <div className="format-grid" style={{ marginTop: 16 }}>
-                  {sponsorshipRequests.map(request => (
-                    <article className="format-card" key={request.id}>
-                      <div className="format-icon"><Megaphone /></div>
-                      <h3>{request.event_name}</h3>
-                      <p>{request.event_type}</p>
-                      <p>Expected audience: {request.expected_audience}</p>
-                      <p>
-                        Amount: ₹
-                        {Number(request.sponsorship_amount).toLocaleString('en-IN')}
-                      </p>
-                      <p>
-                        Status: <strong>
-                          {request.approval_status === 'approved'
-                            ? 'Approved'
-                            : request.approval_status === 'rejected'
-                              ? 'Rejected'
-                              : 'Pending Admin Approval'}
-                        </strong>
-                      </p>
-                      {request.admin_remarks && (
-                        <p>Admin remarks: {request.admin_remarks}</p>
-                      )}
-                    </article>
-                  ))}
-                </div>
-              )}
-            </section>
+                <span className="society-explore-button">
+                  Explore Sponsorships <ArrowRight size={16} />
+                </span>
+              </summary>
 
-            {/* BRAND BOOKINGS */}
-            <section style={{ marginTop: 32 }}>
-              <span className="eyebrow">BRAND BOOKINGS</span>
-              <h2>Booking Requests</h2>
-              <p>
-                Review booking requests submitted by brands for your society.
-              </p>
+              <section className="login-panel" style={{ marginTop: 20 }}>
+                <span className="eyebrow">NEW SPONSORSHIP REQUEST</span>
+                <p>
+                  Admin will review your request before it becomes visible to brands.
+                </p>
 
-              {bookingRequests.length === 0 ? (
-                <div className="login-panel" style={{ marginTop: 16 }}>
-                  <p>No booking requests received yet.</p>
-                </div>
-              ) : (
-                <div className="format-grid" style={{ marginTop: 16 }}>
-                  {bookingRequests.map(request => (
-                    <article className="format-card" key={request.id}>
-                      <div className="format-icon">
-                        <Megaphone />
-                      </div>
+                <form
+                  className="login-form"
+                  onSubmit={handleAddSponsorship}
+                  style={{ marginTop: 20 }}
+                >
+                  <label>
+                    Event name *
+                    <input
+                      required
+                      maxLength={150}
+                      placeholder="Example: Annual Society Carnival"
+                      value={eventName}
+                      onChange={e => setEventName(e.target.value)}
+                    />
+                  </label>
 
-                      <h3>{request.campaign_name}</h3>
+                  <label>
+                    Event type *
+                    <select
+                      value={eventType}
+                      onChange={e => setEventType(e.target.value)}
+                    >
+                      <option>Community Event</option>
+                      <option>Festival Celebration</option>
+                      <option>Sports Event</option>
+                      <option>Kids Carnival</option>
+                      <option>RWA Event</option>
+                      <option>Exhibition</option>
+                      <option>Other</option>
+                    </select>
+                  </label>
 
-                      <p>
-                        Booking type: <strong>{request.booking_type}</strong>
-                      </p>
+                  <label>
+                    Event date
+                    <input
+                      type="date"
+                      value={eventDate}
+                      onChange={e => setEventDate(e.target.value)}
+                    />
+                  </label>
 
-                      <p>Brand account: {request.brand_id}</p>
+                  <label>
+                    Expected audience *
+                    <input
+                      type="number"
+                      min="0"
+                      required
+                      placeholder="Example: 500"
+                      value={expectedAudience}
+                      onChange={e => setExpectedAudience(e.target.value)}
+                    />
+                  </label>
 
-                      <p>
-                        Campaign start: {request.campaign_start_date || 'Not specified'}
-                      </p>
+                  <label>
+                    Sponsorship amount required (₹) *
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      required
+                      placeholder="Example: 50000"
+                      value={sponsorshipAmount}
+                      onChange={e => setSponsorshipAmount(e.target.value)}
+                    />
+                  </label>
 
-                      <p>
-                        Campaign end: {request.campaign_end_date || 'Not specified'}
-                      </p>
+                  <label>
+                    Purpose of sponsorship
+                    <textarea
+                      rows={3}
+                      value={sponsorshipPurpose}
+                      onChange={e => setSponsorshipPurpose(e.target.value)}
+                      placeholder="Explain what the sponsorship will support..."
+                    />
+                  </label>
 
-                      <p>Quantity: {request.quantity}</p>
+                  <label>
+                    Benefits offered to sponsors
+                    <textarea
+                      rows={3}
+                      value={sponsorBenefits}
+                      onChange={e => setSponsorBenefits(e.target.value)}
+                      placeholder="Example: Stall space, banners, branding..."
+                    />
+                  </label>
 
-                      <p>
-                        Total amount: ₹
-                        {Number(request.total_amount || 0).toLocaleString('en-IN')}
-                      </p>
+                  <label>
+                    Proposal link (optional)
+                    <input
+                      type="url"
+                      placeholder="https://..."
+                      value={proposalUrl}
+                      onChange={e => setProposalUrl(e.target.value)}
+                    />
+                  </label>
 
-                      {request.brand_notes && (
-                        <p>Brand notes: {request.brand_notes}</p>
-                      )}
+                  <button
+                    className="button form-submit"
+                    type="submit"
+                    disabled={saving}
+                  >
+                    {saving ? 'Submitting...' : 'Submit Sponsorship Request'}
+                    <ArrowRight size={17} />
+                  </button>
+                </form>
+              </section>
 
-                      <p>
-                        Admin status: <strong>{request.admin_status}</strong>
-                      </p>
+              {/* SPONSORSHIP SUBMISSIONS */}
+              <section style={{ marginTop: 32 }}>
+                <span className="eyebrow">YOUR SUBMISSIONS</span>
+                <h2>Sponsorship Requests Submitted</h2>
 
-                      <p>
-                        Society status: <strong>{request.society_status}</strong>
-                      </p>
-
-                      <p>
-                        Overall status: <strong>{request.booking_status}</strong>
-                      </p>
-
-                      {request.admin_status === 'rejected' ||
-                      request.society_status === 'rejected' ? (
-                        <p><strong>This booking has been rejected.</strong></p>
-                      ) : request.society_status === 'pending' ? (
-                        <div style={{ display: 'flex', gap: 10, marginTop: 16 }}>
-                          <button
-                            className="button"
-                            disabled={saving}
-                            onClick={() =>
-                              handleBookingDecision(request.id, 'approved')
-                            }
-                          >
-                            Approve
-                          </button>
-
-                          <button
-                            className="button button-small"
-                            disabled={saving}
-                            onClick={() =>
-                              handleBookingDecision(request.id, 'rejected')
-                            }
-                          >
-                            Reject
-                          </button>
-                        </div>
-                      ) : (
+                {sponsorshipRequests.length === 0 ? (
+                  <div className="login-panel" style={{ marginTop: 16 }}>
+                    <p>You have not submitted any sponsorship requests yet.</p>
+                  </div>
+                ) : (
+                  <div className="format-grid" style={{ marginTop: 16 }}>
+                    {sponsorshipRequests.map(request => (
+                      <article className="format-card" key={request.id}>
+                        <div className="format-icon"><Megaphone /></div>
+                        <h3>{request.event_name}</h3>
+                        <p>{request.event_type}</p>
+                        <p>Expected audience: {request.expected_audience}</p>
                         <p>
-                          <strong>
-                            {request.booking_status === 'approved'
-                              ? 'Both Admin and Society have approved this booking.'
-                              : 'Your decision has been submitted. Waiting for Admin approval.'}
+                          Amount: ₹
+                          {Number(request.sponsorship_amount).toLocaleString('en-IN')}
+                        </p>
+                        <p>
+                          Status: <strong>
+                            {request.approval_status === 'approved'
+                              ? 'Approved'
+                              : request.approval_status === 'rejected'
+                                ? 'Rejected'
+                                : 'Pending Admin Approval'}
                           </strong>
                         </p>
-                      )}
-                    </article>
-                  ))}
-                </div>
+                        {request.admin_remarks && (
+                          <p>Admin remarks: {request.admin_remarks}</p>
+                        )}
+                      </article>
+                    ))}
+                  </div>
+                )}
+              </section>
+            </details>
+
+            
+{/* CAMPAIGN ITEM APPROVALS */}
+<details
+  id="society-campaign-approvals"
+  className="society-listings-details"
+  style={{ marginTop: 32 }}
+  open
+>
+  <summary className="society-listings-summary">
+    <div className="society-listings-heading">
+      <div className="society-listings-icon">
+        <Check size={25} />
+      </div>
+      <div>
+        <span className="eyebrow">CAMPAIGN APPROVALS</span>
+        <h2>Brand Campaign Items</h2>
+        <p>
+          Review campaign items for your society after AdSociety Admin approval.
+          Each item is approved or rejected separately.
+        </p>
+      </div>
+    </div>
+    <span className="society-explore-button">
+      {campaignItems.length} Items
+      <span className="society-listings-arrow">⌄</span>
+    </span>
+  </summary>
+
+  <div className="society-listings-content">
+    {notice && (
+      <div className="inventory-notice" role="status" style={{ marginBottom: 16 }}>
+        {notice}
+      </div>
+    )}
+
+    <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 18 }}>
+      {(['pending', 'approved', 'rejected'] as const).map(status => {
+        const count = campaignItems.filter(item => {
+          if (status === 'pending') return item.society_status === 'pending' && item.admin_status !== 'rejected' && item.item_status !== 'rejected'
+          return item.society_status === status
+        }).length
+        return (
+          <button
+            key={status}
+            type="button"
+            className={campaignView === status ? 'button' : 'button button-ghost'}
+            onClick={() => setCampaignView(status)}
+          >
+            {status.charAt(0).toUpperCase() + status.slice(1)} ({count})
+          </button>
+        )
+      })}
+    </div>
+
+    {campaignItems.length === 0 ? (
+      <div className="login-panel">
+        <p>No multi-item campaign requests have been received for your society yet.</p>
+      </div>
+    ) : visibleSocietyCampaignItems.length === 0 ? (
+      <div className="login-panel">
+        <p>No {campaignView} campaign items found.</p>
+      </div>
+    ) : (
+      <div className="format-grid">
+        {visibleSocietyCampaignItems.map(item => {
+          const canSocietyReview =
+            item.admin_status === 'approved' &&
+            item.society_status === 'pending' &&
+            item.item_status !== 'rejected' &&
+            item.item_status !== 'confirmed' &&
+            item.item_status !== 'cancelled'
+
+          return (
+            <article className="format-card" key={item.id}>
+              <div className="format-icon">
+                <Megaphone />
+              </div>
+
+              <span className="eyebrow">CAMPAIGN ITEM</span>
+              <h3>{item.item_name || item.category || 'Advertising item'}</h3>
+              <p>Category: {item.category || 'Not specified'}</p>
+              <p>Campaign reference: {item.campaign_id}</p>
+              <p>Quantity: {item.quantity ?? '—'}</p>
+              <p>
+                Rate: ₹{Number(item.rate || 0).toLocaleString('en-IN')}
+                {item.rate_unit ? ` ${item.rate_unit}` : ''}
+              </p>
+              <p>
+                Campaign period: {item.campaign_start_date || '—'}
+                {' '}to{' '}{item.campaign_end_date || '—'}
+              </p>
+              <p>
+                Base amount: ₹{Number(item.base_amount || 0).toLocaleString('en-IN')}
+              </p>
+              <p>
+                GST: ₹{Number(item.gst_amount || 0).toLocaleString('en-IN')}
+              </p>
+              <p>
+                Total amount: <strong>
+                  ₹{Number(item.total_amount || 0).toLocaleString('en-IN')}
+                </strong>
+              </p>
+
+              <p>
+                Admin status: <strong>{item.admin_status || 'pending'}</strong>
+              </p>
+              <p>
+                Society status: <strong>{item.society_status || 'pending'}</strong>
+              </p>
+              <p>
+                Overall item status: <strong>{item.item_status || 'pending'}</strong>
+              </p>
+
+              {canSocietyReview ? (
+                <>
+                  <p>
+                    <strong>Admin has approved this item. Your decision is required.</strong>
+                  </p>
+                  <div style={{ display: 'flex', gap: 10, marginTop: 16, flexWrap: 'wrap' }}>
+                    <button
+                      type="button"
+                      className="button"
+                      disabled={saving}
+                      onClick={() => handleCampaignItemDecision(item.id, 'approved')}
+                    >
+                      {saving ? 'Please wait...' : 'Approve Item'}
+                    </button>
+                    <button
+                      type="button"
+                      className="button button-small"
+                      disabled={saving}
+                      onClick={() => handleCampaignItemDecision(item.id, 'rejected')}
+                    >
+                      Reject Item
+                    </button>
+                  </div>
+                </>
+              ) : item.admin_status === 'pending' ? (
+                <p><strong>Awaiting AdSociety Admin approval.</strong></p>
+              ) : item.admin_status === 'rejected' ? (
+                <p><strong>This item was rejected by AdSociety Admin.</strong></p>
+              ) : item.society_status === 'approved' ? (
+                <p><strong>Your society has approved this item.</strong></p>
+              ) : item.society_status === 'rejected' ? (
+                <p><strong>Your society has rejected this item.</strong></p>
+              ) : (
+                <p><strong>This campaign item is not currently awaiting your decision.</strong></p>
               )}
-            </section>
-          </>
+
+              {item.admin_remarks && (
+                <p>Admin remarks: {item.admin_remarks}</p>
+              )}
+            </article>
+          )
+        })}
+      </div>
+    )}
+  </div>
+</details>
+
+{/* BRAND BOOKINGS */}
+<details id="society-bookings" className="society-listings-details" style={{ marginTop: 32 }}>
+  <summary className="society-listings-summary">
+    <div className="society-listings-heading">
+      <div className="society-listings-icon">
+        <Megaphone size={25} />
+      </div>
+
+      <div>
+        <span className="eyebrow">BRAND BOOKINGS</span>
+        <h2>Booking Requests</h2>
+        <p>
+          Review and manage advertising campaign requests from brands.
+        </p>
+      </div>
+    </div>
+
+    <span className="society-explore-button">
+      Explore Bookings
+      <span className="society-listings-arrow">⌄</span>
+    </span>
+  </summary>
+
+  <div className="society-listings-content">
+    {bookingRequests.length === 0 ? (
+      <div className="login-panel">
+        <p>No booking requests received yet.</p>
+      </div>
+    ) : (
+      <div className="format-grid">
+        {bookingRequests.map(request => (
+          <article className="format-card" key={request.id}>
+            <div className="format-icon">
+              <Megaphone />
+            </div>
+
+            <h3>{request.campaign_name}</h3>
+
+            <p>
+              Booking type: <strong>{request.booking_type}</strong>
+            </p>
+
+            <p>Brand account: {request.brand_id}</p>
+
+            <p>
+              Campaign start: {request.campaign_start_date || 'Not specified'}
+            </p>
+
+            <p>
+              Campaign end: {request.campaign_end_date || 'Not specified'}
+            </p>
+
+            <p>Quantity: {request.quantity}</p>
+
+            <p>
+              Total amount: ₹
+              {Number(request.total_amount || 0).toLocaleString('en-IN')}
+            </p>
+
+            {request.brand_notes && (
+              <p>Brand notes: {request.brand_notes}</p>
+            )}
+
+            <p>
+              Admin status: <strong>{request.admin_status}</strong>
+            </p>
+
+            <p>
+              Society status: <strong>{request.society_status}</strong>
+            </p>
+
+            <p>
+              Overall status: <strong>{request.booking_status}</strong>
+            </p>
+
+            {request.admin_status === 'rejected' ||
+            request.society_status === 'rejected' ? (
+              <p><strong>This booking has been rejected.</strong></p>
+            ) : request.society_status === 'pending' ? (
+              <div style={{ display: 'flex', gap: 10, marginTop: 16 }}>
+                <button
+                  className="button"
+                  disabled={saving}
+                  onClick={() =>
+                    handleBookingDecision(request.id, 'approved')
+                  }
+                >
+                  Approve
+                </button>
+
+                <button
+                  className="button button-small"
+                  disabled={saving}
+                  onClick={() =>
+                    handleBookingDecision(request.id, 'rejected')
+                  }
+                >
+                  Reject
+                </button>
+              </div>
+            ) : (
+              <p>
+                <strong>
+                  {request.booking_status === 'approved'
+                    ? 'Both Admin and Society have approved this booking.'
+                    : 'Your decision has been submitted. Waiting for Admin approval.'}
+                </strong>
+              </p>
+            )}
+          </article>
+        ))}
+      </div>
+    )}
+  
+  </div>
+</details>
+
+           </>
         )}
+      </div>
+
+      </div>
       </div>
     </main>
   )
@@ -1817,6 +2680,7 @@ function SocietyDashboard() {
 /* BRAND MARKETPLACE */
 
 function SocietiesPage() {
+
   const [societies, setSocieties] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -1968,21 +2832,238 @@ function SocietiesPage() {
 
 /* APPLICATION ROUTES */
 
-export default function App() {
+
+/* ADSOCIETY INITIAL LOADING SCREEN */
+
+function InitialLoadingScreen({ leaving }: { leaving: boolean }) {
   return (
-    <Routes>
-      <Route path="/" element={<HomePage />} />
-      <Route path="/login" element={<LoginPage />} />
-      <Route path="/register-society" element={<SocietyRegistration />} />
-      <Route path="/register-brand" element={<BrandRegistration />} />
-      <Route path="/societies" element={<SocietiesPage />} />
-      <Route path="/brand-marketplace" element={<BrandMarketplace />} />
-      <Route path="/society-dashboard" element={<SocietyDashboard />} />
-      <Route path="/supabase-test" element={<SupabaseTest />} />
-      <Route path="/admin" element={<AdminDashboard />} />
-      <Route path="/brand-bookings" element={<BrandMyBookings />} />
-      <Route path="*" element={<HomePage />} />
-      <Route path="/brand-my-bookings" element={<BrandMyBookings />} />
-    </Routes>
+    <>
+      <style>{`
+        .ads-loading-screen {
+          position: fixed;
+          inset: 0;
+          z-index: 99999;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          flex-direction: column;
+          overflow: hidden;
+          background:
+            radial-gradient(ellipse at 50% 42%, rgba(39, 82, 145, 0.30), transparent 48%),
+            linear-gradient(145deg, #071426 0%, #0b1c35 55%, #101b31 100%);
+          color: #ffffff;
+          opacity: 1;
+          visibility: visible;
+          transition: opacity .55s ease, visibility .55s ease;
+        }
+
+        .ads-loading-screen.leaving {
+          opacity: 0;
+          visibility: hidden;
+        }
+
+        .ads-loading-glow {
+          position: absolute;
+          width: 420px;
+          height: 420px;
+          border-radius: 50%;
+          background: rgba(50, 119, 220, .10);
+          filter: blur(90px);
+          pointer-events: none;
+        }
+
+        .ads-loading-content {
+          position: relative;
+          z-index: 1;
+          display: flex;
+          align-items: center;
+          flex-direction: column;
+          width: min(90%, 420px);
+          text-align: center;
+        }
+
+        .ads-loading-icon {
+          width: 92px;
+          height: 92px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          border: 1px solid rgba(145, 190, 255, .35);
+          border-radius: 25px;
+          background: linear-gradient(145deg, rgba(65, 128, 220, .25), rgba(255,255,255,.06));
+          color: #a9d0ff;
+          box-shadow: 0 0 55px rgba(63, 139, 255, .20);
+          animation: ads-building-pulse 2s ease-in-out infinite;
+        }
+
+        .ads-loading-icon svg {
+          width: 48px;
+          height: 48px;
+          stroke-width: 1.5;
+        }
+
+        .ads-loading-title {
+          margin-top: 27px;
+          font-size: 35px;
+          line-height: 1.2;
+          font-weight: 750;
+          letter-spacing: -1.4px;
+        }
+
+        .ads-loading-title span {
+          color: #82b9ff;
+        }
+
+        .ads-loading-tagline {
+          margin-top: 13px;
+          color: #d5e2f4;
+          font-size: 15px;
+          letter-spacing: .25px;
+        }
+
+        .ads-loading-track {
+          width: 230px;
+          height: 4px;
+          margin-top: 43px;
+          overflow: hidden;
+          border-radius: 10px;
+          background: rgba(255,255,255,.13);
+        }
+
+        .ads-loading-progress {
+          width: 0;
+          height: 100%;
+          border-radius: 10px;
+          background: linear-gradient(90deg, #4b91f0, #9bcaff);
+          box-shadow: 0 0 14px rgba(100, 165, 255, .7);
+          animation: ads-loading-progress 2s ease-in-out forwards;
+        }
+
+        .ads-loading-caption {
+          margin-top: 17px;
+          color: #91a6c1;
+          font-size: 11px;
+          letter-spacing: 1.1px;
+          text-transform: uppercase;
+        }
+
+        .ads-loading-footer {
+          position: absolute;
+          bottom: 34px;
+          color: rgba(190, 207, 231, .55);
+          font-size: 11px;
+          letter-spacing: 1.4px;
+        }
+
+        @keyframes ads-building-pulse {
+          0%, 100% {
+            transform: translateY(0);
+            box-shadow: 0 0 35px rgba(63, 139, 255, .15);
+          }
+          50% {
+            transform: translateY(-7px);
+            box-shadow: 0 0 65px rgba(63, 139, 255, .32);
+          }
+        }
+
+        @keyframes ads-loading-progress {
+          0% { width: 0%; }
+          35% { width: 42%; }
+          70% { width: 76%; }
+          100% { width: 100%; }
+        }
+
+        @media (max-width: 480px) {
+          .ads-loading-title { font-size: 30px; }
+          .ads-loading-icon { width: 82px; height: 82px; }
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+          .ads-loading-icon,
+          .ads-loading-progress {
+            animation-duration: .5s;
+          }
+        }
+      `}</style>
+
+      <div
+        className={`ads-loading-screen${leaving ? ' leaving' : ''}`}
+        role="status"
+        aria-label="Loading AdSociety"
+      >
+        <div className="ads-loading-glow" />
+
+        <div className="ads-loading-content">
+          <div className="ads-loading-icon">
+            <Building2 />
+          </div>
+
+          <div className="ads-loading-title">
+            Ad<span>Society</span>
+          </div>
+
+          <div className="ads-loading-tagline">
+            Where communities meet brands.
+          </div>
+
+          <div className="ads-loading-track">
+            <div className="ads-loading-progress" />
+          </div>
+
+          <div className="ads-loading-caption">
+            Connecting communities · Discovering opportunities
+          </div>
+        </div>
+
+        <div className="ads-loading-footer">
+          THE RESIDENTIAL ADVERTISING MARKETPLACE
+        </div>
+      </div>
+    </>
+  )
+}
+
+/* APPLICATION ROUTES */
+
+export default function App() {
+  const [showIntro, setShowIntro] = useState(true)
+  const [introLeaving, setIntroLeaving] = useState(false)
+
+  useEffect(() => {
+    const leaveTimer = window.setTimeout(() => {
+      setIntroLeaving(true)
+    }, 2000)
+
+    const removeTimer = window.setTimeout(() => {
+      setShowIntro(false)
+    }, 2550)
+
+    return () => {
+      window.clearTimeout(leaveTimer)
+      window.clearTimeout(removeTimer)
+    }
+  }, [])
+
+  return (
+    <>
+      <Routes>
+        <Route path="/" element={<HomePage />} />
+        <Route path="/login" element={<LoginPage />} />
+        <Route path="/register-society" element={<SocietyRegistration />} />
+        <Route path="/register-brand" element={<BrandRegistration />} />
+        <Route path="/societies" element={<SocietiesPage />} />
+        <Route path="/brand-marketplace" element={<BrandMarketplace />} />
+        <Route path="/society-dashboard" element={<SocietyDashboard />} />
+        <Route path="/supabase-test" element={<SupabaseTest />} />
+        <Route path="/admin" element={<AdminDashboard />} />
+        <Route path="/brand-bookings" element={<BrandMyBookings />} />
+        <Route path="/brand-my-bookings" element={<BrandMyBookings />} />
+        <Route path="*" element={<HomePage />} />
+      </Routes>
+
+      {showIntro && (
+        <InitialLoadingScreen leaving={introLeaving} />
+      )}
+    </>
   )
 }
